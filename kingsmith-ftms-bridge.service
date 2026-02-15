@@ -1,0 +1,22 @@
+[Unit]
+Description=Kingsmith WalkingPad R2 to FTMS Bluetooth Bridge
+After=network.target bluetooth.target
+# If using two adapters (e.g. built-in + USB BLE), ensure both are up
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+# Run from project or install location. Adjust WorkingDirectory and ExecStart if installed via pip.
+WorkingDirectory=/home/pi/kingsmith-ftms-bridge
+ExecStart=/usr/bin/python3 -m kingsmith_ftms_bridge.main
+Restart=always
+RestartSec=10
+# Bluetooth (optional: add user to group bluetooth instead)
+# Capabilities=cap_net_raw,cap_net_admin
+# Optional: use a virtualenv
+# Environment="PATH=/home/pi/kingsmith-ftms-bridge/.venv/bin:/usr/bin"
+
+[Install]
+WantedBy=multi-user.target
