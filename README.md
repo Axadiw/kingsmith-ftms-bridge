@@ -2,7 +2,9 @@
 
 A bridge that connects a **Kingsmith treadmill (WalkingPad R2)** to the **FTMS** (Fitness Machine Service) protocol, so you can use it with **Apple Fitness (Workout)**, Zwift, Peloton, and other apps that support standard Bluetooth FTMS treadmills.
 
-The Kingsmith treadmill uses its own BLE protocol; this app continuously connects to the treadmill, receives data (speed, distance, time) and rebroadcasts it as an **FTMS server** from a second Bluetooth adapter. This requires **two Bluetooth interfaces** (e.g. built-in on Raspberry Pi + external USB BLE adapter).
+The Kingsmith treadmill uses its own BLE protocol; this app continuously connects to the treadmill, receives data (speed, distance, time) and rebroadcasts it as a standard **FTMS server** — all from a single Bluetooth adapter.
+
+Tested on **Kingsmith WalkingPad R2** with **Raspberry Pi 4**.
 
 ## Features
 
@@ -16,9 +18,7 @@ The Kingsmith treadmill uses its own BLE protocol; this app continuously connect
 
 - **Python 3.10+**
 - **Linux** with BlueZ (e.g. Raspberry Pi OS, Debian, Ubuntu)
-- **Two Bluetooth adapters**:
-  - one to connect **to** the treadmill (BLE client),
-  - one to **advertise** the FTMS service (GATT server).
+- **Bluetooth adapter** (e.g. built-in on Raspberry Pi 4)
 - Treadmill in range and ready (Bluetooth on).
 
 ## Installation
@@ -66,8 +66,7 @@ Example `config.json`:
 
 ```json
 {
-  "walkingpad_adapter": "hci0",
-  "ftms_adapter": "hci1",
+  "ble_adapter": "hci0",
   "ftms_device_name": "Kingsmith R2 FTMS",
   "web_port": 8080,
   "web_host": "0.0.0.0",
@@ -77,8 +76,7 @@ Example `config.json`:
 }
 ```
 
-- **walkingpad_adapter** — BLE adapter used to connect to the treadmill (e.g. `hci0`). Empty = default.
-- **ftms_adapter** — BLE adapter used to advertise FTMS (e.g. `hci1`). Empty = default.
+- **ble_adapter** — BLE adapter to use (e.g. `hci0`). Empty = default.
 - **ftms_device_name** — Device name visible in apps (e.g. Apple Fitness).
 - **web_port** / **web_host** — Web UI port and bind address.
 - **scan_interval** — How often (seconds) to scan for the treadmill.
@@ -125,9 +123,9 @@ python -m kingsmith_ftms_bridge.main --no-auto
 
 ## Using with Apple Fitness (Workout)
 
-1. Run the bridge on a Raspberry Pi (or other host with two BLE adapters).
-2. Ensure the treadmill is on and in range of the “walkingpad” adapter.
-3. After connection, the bridge will advertise FTMS data from the second adapter.
+1. Run the bridge on a Raspberry Pi (or other Linux host with a BLE adapter).
+2. Ensure the treadmill is on and in range.
+3. After connection, the bridge will advertise FTMS data.
 4. On **iPhone / Apple Watch**: Open **Fitness** → **Workout** → choose e.g. “Treadmill” / “Walking” and in Bluetooth device settings search for the device name from **ftms_device_name** (e.g. “Kingsmith R2 FTMS”) and connect.
 5. Start the workout — speed, distance, and time from the treadmill will be sent to Workout.
 
@@ -171,20 +169,6 @@ sudo systemctl status kingsmith-ftms-bridge
 journalctl -u kingsmith-ftms-bridge -f
 ```
 
-## Two Bluetooth adapters
-
-- **hci0** — Usually the built-in adapter (e.g. Raspberry Pi).
-- **hci1** — e.g. external USB BLE (often used as the second).
-
-In config, set e.g. `walkingpad_adapter` to one and `ftms_adapter` to the other. If you have only one adapter, leave both fields empty — both roles will use the default adapter (may work poorly or not at all if one adapter cannot act as both client and GATT server).
-
-List adapters:
-
-```bash
-hciconfig
-bluetoothctl list
-```
-
 ## API (for integration)
 
 - `GET /api/status` — Connection status, FTMS bridge status, and current data (speed, distance, time).
@@ -203,5 +187,5 @@ bluetoothctl list
 ## Troubleshooting
 
 - **Treadmill not discovered** — Ensure the treadmill’s Bluetooth is on and no other app (e.g. the official Kingsmith app) is connected to it (only one connection is allowed).
-- **Apple Fitness doesn’t see the device** — Check that the FTMS bridge is on (in the UI: “FTMS Bridge: On”) and that you’re using the second adapter for advertising; on iPhone go to Settings → Bluetooth and look for the name from **ftms_device_name**.
+- **Apple Fitness doesn't see the device** — Check that the FTMS bridge is on (in the UI: "FTMS Bridge: On"); on iPhone go to Settings → Bluetooth and look for the name from **ftms_device_name**.
 - **BlueZ / GATT permission error** — Run with permissions that allow Bluetooth access (e.g. user in the `bluetooth` group) or run with `sudo` only for testing.

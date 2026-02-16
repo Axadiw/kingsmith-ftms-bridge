@@ -14,10 +14,10 @@ from bleak import BleakClient, BleakScanner
 
 logger = logging.getLogger(__name__)
 
-# WalkingPad uses FTMS-like UUIDs but proprietary protocol.
-SERVICE_UUID = "00001826-0000-1000-8000-00805f9b34fb"
-CHAR_WRITE = "00002ad9-0000-1000-8000-00805f9b34fb"
-CHAR_NOTIFY = "00002acd-0000-1000-8000-00805f9b34fb"
+# Kingsmith vendor-specific BLE service & characteristics.
+SERVICE_UUID = "0000fe00-0000-1000-8000-00805f9b34fb"
+CHAR_WRITE = "0000fe02-0000-1000-8000-00805f9b34fb"
+CHAR_NOTIFY = "0000fe01-0000-1000-8000-00805f9b34fb"
 
 
 @dataclass
@@ -58,7 +58,7 @@ def parse_status(data: bytes) -> WalkingPadStatus | None:
         steps=steps,
         belt_state=data[2],
         manual_mode=manual_mode,
-        app_speed_kmh=(app_speed_raw / 30.0) if app_speed_raw else 0.0,
+        app_speed_kmh=app_speed_raw / 10.0,
     )
 
 
@@ -279,21 +279,19 @@ class WalkingPadClient:
         logger.info("Disconnected from WalkingPad")
 
     async def start_belt(self) -> None:
-        """Start the belt."""
-        cmd = bytearray([0x07])
-        await self._send_cmd(cmd)
+        """Start the belt (switch to manual mode, then start)."""
+        # Switch to manual mode first
+        await self._send_cmd(_fix_crc(bytearray([0xF7, 0xA2, 0x02, 0x01, 0xFF, 0xFD])))
+        await asyncio.sleep(self._min_cmd_interval)
+        # Start command
+        await self._send_cmd(_fix_crc(bytearray([0xF7, 0xA2, 0x04, 0x01, 0xFF, 0xFD])))
 
     async def stop_belt(self) -> None:
-        """Stop the belt."""
-        cmd = bytearray([0x08, 0x01])
-        await self._send_cmd(cmd)
+        """Stop the belt (set speed to 0)."""
+        await self._send_cmd(_fix_crc(bytearray([0xF7, 0xA2, 0x01, 0x00, 0xFF, 0xFD])))
 
     async def set_speed_kmh(self, speed: float) -> None:
-        """Set target speed in km/h (0.5–6.0 typical)."""
-        val = int(round(speed * 100))
-        val = max(0, min(600, val))
-        hex_val = f"{val:04x}"
-        le_bytes = bytearray.fromhex(hex_val)
-        le_bytes.reverse()
-        cmd = bytearray([0x02]) + le_bytes
-        await self._send_cmd(cmd)
+        """Set target speed in km/h (0.5–6.0 typical). Uses 0.1 km/h units."""
+        val = int(round(speed * 10))
+        val = max(0, min(60, val))
+        await self._send_cmd(_fix_crc(bytearray([0xF7, 0xA2, 0x01, val, 0xFF, 0xFD])))

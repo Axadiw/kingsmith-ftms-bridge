@@ -253,6 +253,77 @@ def _html():
     }
     #devices li small { color: var(--muted); margin-left: 0.3rem; }
     .hint { color: var(--muted); font-size: 0.8rem; }
+
+    /* --- Controls --- */
+    .controls-card {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 1.2rem;
+      margin-bottom: 1rem;
+    }
+    .controls-card h3 {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 1rem;
+    }
+    .speed-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .speed-display {
+      font-size: 1.4rem;
+      font-weight: 300;
+      font-variant-numeric: tabular-nums;
+      min-width: 3.5rem;
+      text-align: right;
+    }
+    .speed-unit { color: var(--muted); font-size: 0.75rem; }
+    input[type=range] {
+      flex: 1;
+      -webkit-appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.12);
+      outline: none;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+    }
+    input[type=range]::-moz-range-thumb {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      border: none;
+    }
+    .ctrl-btns { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .btn--start { background: var(--accent); color: var(--bg); }
+    .btn--stop { background: var(--danger); color: white; }
+    .speed-steps { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    .speed-step {
+      padding: 0.3rem 0.65rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      background: rgba(255,255,255,0.07);
+      color: var(--text);
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s;
+    }
+    .speed-step:hover { background: rgba(255,255,255,0.13); }
+    .speed-step.active { border-color: var(--accent); color: var(--accent); }
   </style>
 </head>
 <body>
@@ -307,6 +378,21 @@ def _html():
         <div class="sec-metric">
           <div class="sec-label">Cadence</div>
           <div class="sec-value" id="w-cadence">0</div>
+        </div>
+      </div>
+
+      <div class="controls-card" id="controls-card">
+        <h3>Control</h3>
+        <div class="speed-row">
+          <input type="range" id="speed-slider" min="5" max="60" step="1" value="20">
+          <span class="speed-display" id="speed-target-val">2.0</span>
+          <span class="speed-unit">km/h</span>
+        </div>
+        <div class="speed-steps" id="speed-presets"></div>
+        <div class="ctrl-btns">
+          <button class="btn btn--start" id="btn-start-belt" disabled>Start</button>
+          <button class="btn btn--stop" id="btn-stop-belt" disabled>Stop</button>
+          <button class="btn btn--primary" id="btn-set-speed" disabled>Set speed</button>
         </div>
       </div>
     </div>
@@ -387,6 +473,12 @@ def _html():
         document.getElementById('w-avg-speed').textContent = avgSpd.toFixed(1);
         document.getElementById('w-cadence').textContent = cadence;
 
+        /* Control buttons */
+        const connected = !!d.connected;
+        document.getElementById('btn-start-belt').disabled = !connected || !!d.belt_running;
+        document.getElementById('btn-stop-belt').disabled = !connected || !d.belt_running;
+        document.getElementById('btn-set-speed').disabled = !connected;
+
         /* Status bar */
         const sdT = document.getElementById('sd-treadmill');
         const slT = document.getElementById('sl-treadmill');
@@ -410,6 +502,48 @@ def _html():
       }).catch(() => {});
     }
 
+    /* --- Controls --- */
+    const PRESETS = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0];
+    const presetsEl = document.getElementById('speed-presets');
+    PRESETS.forEach(v => {
+      const s = document.createElement('span');
+      s.className = 'speed-step';
+      s.textContent = v.toFixed(1);
+      s.onclick = () => {
+        document.getElementById('speed-slider').value = Math.round(v * 10);
+        updateSpeedDisplay();
+        setSpeed(v);
+      };
+      presetsEl.appendChild(s);
+    });
+
+    function updateSpeedDisplay() {
+      const raw = parseInt(document.getElementById('speed-slider').value, 10);
+      const kmh = raw / 10;
+      document.getElementById('speed-target-val').textContent = kmh.toFixed(1);
+      presetsEl.querySelectorAll('.speed-step').forEach(s => {
+        s.classList.toggle('active', parseFloat(s.textContent) === kmh);
+      });
+    }
+
+    document.getElementById('speed-slider').oninput = updateSpeedDisplay;
+    updateSpeedDisplay();
+
+    function setSpeed(val) {
+      api('/treadmill/speed', { method: 'POST', body: JSON.stringify({ speed_kmh: val }) });
+    }
+
+    document.getElementById('btn-set-speed').onclick = () => {
+      const raw = parseInt(document.getElementById('speed-slider').value, 10);
+      setSpeed(raw / 10);
+    };
+
+    document.getElementById('btn-start-belt').onclick = () =>
+      api('/treadmill/start', { method: 'POST' }).then(() => refresh());
+
+    document.getElementById('btn-stop-belt').onclick = () =>
+      api('/treadmill/stop', { method: 'POST' }).then(() => refresh());
+
     /* --- Devices actions --- */
     document.getElementById('btn-scan').onclick = () => {
       document.getElementById('scan-hint').textContent = 'Scanning...';
@@ -422,7 +556,7 @@ def _html():
           li.innerHTML = '<span>' + (name || addr) + '<small>' + addr + '</small></span>'
             + '<button class="btn btn--primary">Connect</button>';
           li.querySelector('button').onclick = () => {
-            api('/connect', { method: 'POST', body: JSON.stringify({ address: addr }) }).then(() => refresh());
+            api('/connect', { method: 'POST', body: JSON.stringify({ address: addr, name: name }) }).then(() => refresh());
           };
           ul.appendChild(li);
         });
@@ -455,6 +589,7 @@ def api_status():
         "distance_km": round(s.distance_km, 3) if s else None,
         "time_seconds": s.time_seconds if s else None,
         "steps": s.steps if s else None,
+        "belt_running": s.is_running if s else False,
     })
 
 
@@ -476,7 +611,8 @@ def api_connect():
     addr = data.get("address")
     if not addr:
         return jsonify(ok=False, error="address required")
-    ok = _run_coro(b.connect_treadmill(addr))
+    name = data.get("name")
+    ok = _run_coro(b.connect_treadmill(addr, name=name))
     if ok and b.config.get("auto_start_bridge"):
         _run_coro(b.start_bridge())
     return jsonify(ok=ok)
@@ -489,6 +625,50 @@ def api_disconnect():
         return jsonify(ok=True)
     _run_coro(b.disconnect_treadmill())
     return jsonify(ok=True)
+
+
+@app.route("/api/treadmill/start", methods=["POST"])
+def api_treadmill_start():
+    b = bridge_ref
+    if not b:
+        return jsonify(ok=False, error="bridge not ready")
+    try:
+        _run_coro(b.start_belt())
+        return jsonify(ok=True)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
+
+@app.route("/api/treadmill/stop", methods=["POST"])
+def api_treadmill_stop():
+    b = bridge_ref
+    if not b:
+        return jsonify(ok=False, error="bridge not ready")
+    try:
+        _run_coro(b.stop_belt())
+        return jsonify(ok=True)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
+
+@app.route("/api/treadmill/speed", methods=["POST"])
+def api_treadmill_speed():
+    b = bridge_ref
+    if not b:
+        return jsonify(ok=False, error="bridge not ready")
+    data = request.get_json() or {}
+    speed = data.get("speed_kmh")
+    if speed is None:
+        return jsonify(ok=False, error="speed_kmh required")
+    try:
+        speed = float(speed)
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="invalid speed_kmh")
+    try:
+        _run_coro(b.set_speed(speed))
+        return jsonify(ok=True)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
 
 
 @app.route("/api/bridge/start", methods=["POST"])

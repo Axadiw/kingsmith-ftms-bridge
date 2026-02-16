@@ -1,4 +1,4 @@
-"""Configuration: adapter IDs, web port, device name."""
+"""Configuration: adapter ID, web port, device name."""
 
 import json
 import os
@@ -22,12 +22,8 @@ def load_config() -> dict:
 
 def _default_config() -> dict:
     return {
-        # BLE adapter for connecting TO the treadmill (client).
-        "walkingpad_adapter": "hci0",
-        # BLE adapter for advertising FTMS (GATT server).
-        "ftms_adapter": "hci1",
-        # Local name advertised as FTMS treadmill (e.g. "Kingsmith R2 FTMS").
-        "ftms_device_name": "Kingsmith R2 FTMS",
+        # BLE adapter used for both treadmill connection and FTMS advertising.
+        "ble_adapter": "hci0",
         # Web UI port.
         "web_port": 8080,
         # Web UI bind address.

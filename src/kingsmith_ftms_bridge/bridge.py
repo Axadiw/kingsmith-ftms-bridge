@@ -23,12 +23,13 @@ class Bridge:
         self._ftms_task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._client = WalkingPadClient(
-            adapter=self.config.get("walkingpad_adapter"),
+            adapter=self.config.get("ble_adapter"),
             on_status=self._on_walkingpad_status,
             stats_interval_ms=self.config.get("stats_interval_ms", 750),
         )
         self._running = False
         self._bridge_active = False
+        self._treadmill_name: str | None = None
 
     def _on_walkingpad_status(self, status: WalkingPadStatus) -> None:
         """Called from BLE callback (may be from another thread)."""
@@ -44,6 +45,44 @@ class Bridge:
     def get_status(self) -> WalkingPadStatus | None:
         return self._status
 
+    # --- Treadmill control (used by both FTMS Control Point and web UI) ---
+
+    async def start_belt(self) -> None:
+        """Start the treadmill belt."""
+        if not self._client.is_connected:
+            raise RuntimeError("Not connected to treadmill")
+        await self._client.start_belt()
+        logger.info("Belt started")
+
+    async def stop_belt(self) -> None:
+        """Stop the treadmill belt."""
+        if not self._client.is_connected:
+            raise RuntimeError("Not connected to treadmill")
+        await self._client.stop_belt()
+        logger.info("Belt stopped")
+
+    async def set_speed(self, speed_kmh: float) -> None:
+        """Set treadmill target speed in km/h."""
+        if not self._client.is_connected:
+            raise RuntimeError("Not connected to treadmill")
+        await self._client.set_speed_kmh(speed_kmh)
+        logger.info("Speed set to %.2f km/h", speed_kmh)
+
+    def _handle_ftms_control(self, cmd: str, *args) -> None:
+        """Handle FTMS Control Point commands.
+
+        Called from the D-Bus/asyncio event loop thread (via bluez_peripheral setter),
+        so we schedule commands with asyncio.ensure_future — NOT run_coroutine_threadsafe.
+        """
+        if not self._client.is_connected:
+            return
+        if cmd == "start":
+            asyncio.ensure_future(self._client.start_belt())
+        elif cmd == "stop":
+            asyncio.ensure_future(self._client.stop_belt())
+        elif cmd == "set_speed" and args:
+            asyncio.ensure_future(self._client.set_speed_kmh(args[0]))
+
     @property
     def is_connected(self) -> bool:
         return self._client.is_connected
@@ -56,14 +95,19 @@ class Bridge:
     def treadmill_address(self) -> str | None:
         return self._client.address
 
+    @property
+    def treadmill_name(self) -> str | None:
+        return self._treadmill_name
+
     async def scan(self, timeout: float = 8.0) -> list[tuple[str, str]]:
         """Scan for WalkingPad devices."""
         return await self._client.scan(timeout=timeout)
 
-    async def connect_treadmill(self, address: str) -> bool:
+    async def connect_treadmill(self, address: str, name: str | None = None) -> bool:
         """Connect to treadmill by address. Returns True on success."""
         try:
             await self._client.connect(address)
+            self._treadmill_name = name
             return True
         except Exception as e:
             logger.exception("Connect failed: %s", e)
@@ -73,6 +117,7 @@ class Bridge:
         """Disconnect from treadmill and stop FTMS if running."""
         await self.stop_bridge()
         await self._client.disconnect()
+        self._treadmill_name = None
 
     async def start_bridge(self) -> bool:
         """Start FTMS server (advertise treadmill data). Requires already connected to WalkingPad."""
@@ -91,8 +136,8 @@ class Bridge:
         from bluez_peripheral.util import get_message_bus, Adapter
         from bluez_peripheral.advert import Advertisement
         bus = await get_message_bus()
-        ftms_adapter_name = self.config.get("ftms_adapter") or "hci0"
-        adapter_path = f"/org/bluez/{ftms_adapter_name}"
+        ble_adapter_name = self.config.get("ble_adapter") or "hci0"
+        adapter_path = f"/org/bluez/{ble_adapter_name}"
         try:
             introspection = await bus.introspect("org.bluez", adapter_path)
             proxy = bus.get_proxy_object("org.bluez", adapter_path, introspection)
@@ -100,14 +145,17 @@ class Bridge:
         except Exception as e:
             logger.error(
                 "Cannot access BLE adapter '%s' for FTMS server: %s. "
-                "Set 'ftms_adapter' in config (e.g. 'hci0' or 'hci1').",
-                ftms_adapter_name, e,
+                "Set 'ble_adapter' in config (e.g. 'hci0').",
+                ble_adapter_name, e,
             )
             return False
-        service = FtmsTreadmillService(get_status)
+        service = FtmsTreadmillService(get_status, on_control_command=self._handle_ftms_control)
         await service.register(bus, adapter=adapter)
         self._ftms_service = service
-        name = self.config.get("ftms_device_name", "Kingsmith R2 FTMS")
+        # Use explicit config override if set, otherwise derive from connected device name.
+        name = self.config.get("ftms_device_name") or (
+            f"{self._treadmill_name} FTMS" if self._treadmill_name else "Kingsmith FTMS"
+        )
         advert = Advertisement(name, [FTMS_SERVICE_UUID], 0x0340, 0)  # appearance, timeout=0
         await advert.register(bus, adapter=adapter)
         self._bridge_active = True
@@ -168,7 +216,7 @@ class Bridge:
                     if devices:
                         address, name = devices[0]
                         logger.info("Found treadmill: %s (%s), connecting...", name, address)
-                        ok = await self.connect_treadmill(address)
+                        ok = await self.connect_treadmill(address, name=name)
                         if ok:
                             last_address = address
                             if auto_start_bridge:
